@@ -10,6 +10,7 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import Float64MultiArray, Float64
 from cv_bridge import CvBridge, CvBridgeError
 import matplotlib.pyplot as plt
+import math 
 
 import os.path
 class image_converter:
@@ -59,9 +60,9 @@ class image_converter:
 
 
         # loading template for links as binary image (used in lab 2)
-        #  self.link1 = cv2.inRange(cv2.imread('link1.png', 1), (200, 200, 200), (255, 255, 255))
-        #  self.link2 = cv2.inRange(cv2.imread('link2.png', 1), (200, 200, 200), (255, 255, 255))
-        #  self.link3 = cv2.inRange(cv2.imread('link3.png', 1), (200, 200, 200), (255, 255, 255))
+        self.link1 = cv2.inRange(cv2.imread('link1.png', 1), (200, 200, 200), (255, 255, 255))
+        self.link2 = cv2.inRange(cv2.imread('link2.png', 1), (200, 200, 200), (255, 255, 255))
+        self.link3 = cv2.inRange(cv2.imread('link3.png', 1), (200, 200, 200), (255, 255, 255))
 
         # Perform image processing task (your code goes here)
 
@@ -69,64 +70,11 @@ class image_converter:
 
         # Convert BGR to HSV
         hsv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
-
-        bgr_planes = cv2.split(hsv_image)
-
-        plot_hist_if_not_present(hsv_image,bgr_planes)
-
-        blob_color_mins = [hue360to179(100),hue360to179(-20),hue360to179(220),hue360to179(40)]
-        blob_saturation_mins = [127.5,127.5,127.5,127.5]
-        blob_intensity_mins = [0,0,0,0]
         
-
-        blob_color_maxs = [hue360to179(140),hue360to179(20),hue360to179(260),hue360to179(80)]
-        blob_saturation_maxs = [255,255,255,255]
-        blob_intensity_maxs = [255,255,255,255]
-
-        green_mask = threshold_binary_hue(hsv_image,[blob_color_mins[0],blob_saturation_mins[0],blob_intensity_mins[0]],[blob_color_maxs[0],blob_saturation_maxs[0],blob_intensity_maxs[0]])
-        red_mask = threshold_binary_hue(hsv_image,[blob_color_mins[1],blob_saturation_mins[1],blob_intensity_mins[1]],[blob_color_maxs[1],blob_saturation_maxs[1],blob_intensity_maxs[1]])
-        blue_mask = threshold_binary_hue(hsv_image,[blob_color_mins[2],blob_saturation_mins[2],blob_intensity_mins[2]],[blob_color_maxs[2],blob_saturation_maxs[2],blob_intensity_maxs[2]])
-        yellow_mask = threshold_binary_hue(hsv_image,[blob_color_mins[3],blob_saturation_mins[3],blob_intensity_mins[3]],[blob_color_maxs[3],blob_saturation_maxs[3],blob_intensity_maxs[3]])
+        coms,comsImage,total_mask = threshold_joints(hsv_image)
+        link_mask = threshold_links(hsv_image)
+        total_mask = cv2.bitwise_or(link_mask,total_mask)
         
-        cv2.imwrite("green_mask.png",green_mask)
-        cv2.imwrite("red_mask.png",red_mask)
-        cv2.imwrite("blue_mask.png",blue_mask)
-        cv2.imwrite("yellow_mask.png",yellow_mask)
-        
-        red_mask,green_mask,blue_mask,yellow_mask = [
-            cv2.morphologyEx(m,
-            cv2.MORPH_OPEN,cv2.getStructuringElement(cv2.MORPH_ELLIPSE,ksize)) for m,ksize in  
-            zip([red_mask,green_mask,blue_mask,yellow_mask],[(8,8),(10,10),(20,20),(30,30)])]
-
-
-
-
-        total_mask = cv2.bitwise_or(green_mask,red_mask)
-        total_mask = cv2.bitwise_or(total_mask,blue_mask)
-        total_mask = cv2.bitwise_or(total_mask,yellow_mask)
-        new_cv_image = cv2.bitwise_and(cv_image,cv_image, mask = total_mask)
-        new_cv_image = cv2.cvtColor(new_cv_image, cv2.COLOR_HSV2BGR)
-
-        coms = np.zeros((4,2))
-        idx = 0
-        for m in [green_mask,red_mask,blue_mask,yellow_mask]:
-            contours,hierarchy = cv2.findContours(m, 1, 2)
-            cnt = contours[0]
-            M = cv2.moments(cnt)
-
-            cx =int(M['m10']/M['m00']) 
-            cy =int(M['m01']/M['m00'])
-
-            total_mask = cv2.drawMarker(total_mask, (cx,cy),(80,255,255),markerSize=60,thickness=2)
-
-            coms[idx,0] = int(cx- w/2)
-            coms[idx,1] = int(cy - h/2) * -1
-
-            idx = idx + 1
-
-        scaleFactor = np.linalg.norm(coms[1] - coms[3]) / 9
-
-        coms *= 1/scaleFactor
         # change te value of self.joint.data to your estimated value from thew images once you have finalized the code
         self.joints = Float64MultiArray()
 
@@ -134,22 +82,86 @@ class image_converter:
         blue_to_green = coms[0] - coms[2]
         green_to_red = coms[1] - coms[0]
 
-        self.joints.data = np.arctan2([
-                                        yellow_to_blue[0],
-                                        blue_to_green[0],
-                                        green_to_red[0]],
-                                    [
-                                        yellow_to_blue[1],
-                                        blue_to_green[1],
-                                        green_to_red[1]
-                                        ])
+        # self.joints.data = np.arctan2([
+        #                                 yellow_to_blue[0],
+        #                                 blue_to_green[0],
+        #                                 green_to_red[0]],
+        #                             [
+        #                                 yellow_to_blue[1],
+        #                                 blue_to_green[1],
+        #                                 green_to_red[1]
+        #                                 ])
 
-        self.joints.data *= -1
-        self.joints.data[1] -= self.joints.data[0]
-        self.joints.data[2] -= self.joints.data[1] + self.joints.data[0]
+        yellow_to_blue_image = comsImage[2] - comsImage[3]
+        blue_to_green_image = comsImage[0] - comsImage[2]
+        green_to_red_image = comsImage[1] - comsImage[0]        
+        
+        link_centers = [comsImage[3] + yellow_to_blue_image/2,
+                        comsImage[2] + blue_to_green_image/2,
+                        comsImage[0] + green_to_red_image/2]
+    
+        link_1_shape = self.link1.shape
+        link_2_shape = self.link2.shape 
+        link_3_shape = self.link3.shape
+
+        link_1_crop,link_2_crop,link_3_crop = [ crop_rectangle(link_mask,lc,ls) for lc,ls in zip(link_centers,[link_1_shape,link_2_shape,link_3_shape])]
+
+
+        directions = [yellow_to_blue_image,blue_to_green_image,green_to_red_image]
+        idx = 0
+        chamfer_rotations = []
+        for (chamfer,link) in zip([self.link1,self.link2,self.link3],[link_1_crop,link_2_crop,link_3_crop]):
+            angTurn = 1
+
+            phaseAngle = abs(np.arctan2(-directions[idx][1],directions[idx][0]))
+            angStart = -90
+            angMax = 90
+            q = 0
+
+            if(phaseAngle < math.pi * (1/4)): # q1
+                angStart = -90
+                angMax = -45
+                q=1
+            elif (phaseAngle < math.pi * (1/2)): #q 2
+                angStart = -45
+                angMax = 0
+                q=2
+            elif (phaseAngle < math.pi * (3/4)): #q3
+                angStart = 0
+                angMax = 45
+                q=3
+            else: #q4
+                angStart = 45
+                angMax = 90
+                q=4
+
+
+            minSum = math.inf
+            minAng = math.inf
+            currAng = angStart
+
+            while(currAng <= angMax):
+                currSum = chamfer_match_link(link,chamfer,currAng)
+                if(currSum < minSum):
+                    minSum = currSum
+                    minAng = currAng
+                currAng += angTurn
+
+            chamfer_rotations.append(minAng)
+            idx += 1
+            
+
+        self.joints.data = [ chamfer_rotations[0],
+                            chamfer_rotations[1] - chamfer_rotations[0],
+                            chamfer_rotations[2] - chamfer_rotations[1]]
+
+        print(self.joints.data)
         # The image is loaded as cv_imag
 
-        cv2.imshow('window', total_mask)
+        cv2.imshow('window', link_1_crop)
+        cv2.imshow('window2', link_2_crop)
+        cv2.imshow('window3', link_3_crop)
+
         cv2.waitKey(3)
 
         # publish the estimated position of robot end-effector (for lab 3)
@@ -172,7 +184,7 @@ class image_converter:
 
         # Publish the results - the images are published under a topic named "image_topic" and calculated joints angles are published under a topic named "joints_pos"
         try:
-            self.image_pub.publish(self.bridge.cv2_to_imgmsg(new_cv_image, "bgr8"))
+            self.image_pub.publish(self.bridge.cv2_to_imgmsg(cv_image, "bgr8"))
             self.joints_pub.publish(self.joints)
             # (for lab 3)
             # self.trajectory_pub.publish(self.trajectory_desired)
@@ -182,6 +194,102 @@ class image_converter:
             # self.robot_joint3_pub.publish(self.joint3)
         except CvBridgeError as e:
             print(e)
+
+def chamfer_match_link(link,chamfer,rotation):
+    h,w = link.shape
+    M = cv2.getRotationMatrix2D((w/2,h/2),rotation,1)
+
+
+    rotated_chamfer = cv2.warpAffine(chamfer,M,(w,h))
+
+    dst_map	= cv2.distanceTransform(cv2.bitwise_not(link),cv2.DIST_L2,0)
+    sum_dists = (rotated_chamfer * dst_map).sum()
+    return sum_dists     
+
+    
+
+def crop_rectangle(img, center, dims):
+    x1 = int(center[0] - (dims[1] / 2))
+    x2 = int(center[0] + (dims[1] / 2))
+
+    y1 = int(center[1] - (dims[0] / 2))
+    y2 = int(center[1] + (dims[0] / 2))
+
+
+    return img[y1:y2,x1:x2]
+
+def threshold_links(hsv_image):
+
+    link_mask = threshold_binary_hue(hsv_image,[0,0,0],[179,255,10])
+
+    return link_mask
+
+def threshold_joints(hsv_image):
+    h,w,c = hsv_image.shape
+
+    bgr_planes = cv2.split(hsv_image)
+
+    plot_hist_if_not_present(hsv_image,bgr_planes)
+
+    blob_color_mins = [hue360to179(100),hue360to179(-20),hue360to179(220),hue360to179(40)]
+    blob_saturation_mins = [127.5,127.5,127.5,127.5]
+    blob_intensity_mins = [0,0,0,0]
+    
+
+    blob_color_maxs = [hue360to179(140),hue360to179(20),hue360to179(260),hue360to179(80)]
+    blob_saturation_maxs = [255,255,255,255]
+    blob_intensity_maxs = [255,255,255,255]
+
+    green_mask = threshold_binary_hue(hsv_image,[blob_color_mins[0],blob_saturation_mins[0],blob_intensity_mins[0]],[blob_color_maxs[0],blob_saturation_maxs[0],blob_intensity_maxs[0]])
+    red_mask = threshold_binary_hue(hsv_image,[blob_color_mins[1],blob_saturation_mins[1],blob_intensity_mins[1]],[blob_color_maxs[1],blob_saturation_maxs[1],blob_intensity_maxs[1]])
+    blue_mask = threshold_binary_hue(hsv_image,[blob_color_mins[2],blob_saturation_mins[2],blob_intensity_mins[2]],[blob_color_maxs[2],blob_saturation_maxs[2],blob_intensity_maxs[2]])
+    yellow_mask = threshold_binary_hue(hsv_image,[blob_color_mins[3],blob_saturation_mins[3],blob_intensity_mins[3]],[blob_color_maxs[3],blob_saturation_maxs[3],blob_intensity_maxs[3]])
+    
+    cv2.imwrite("green_mask.png",green_mask)
+    cv2.imwrite("red_mask.png",red_mask)
+    cv2.imwrite("blue_mask.png",blue_mask)
+    cv2.imwrite("yellow_mask.png",yellow_mask)
+    
+    red_mask,green_mask,blue_mask,yellow_mask = [
+        cv2.morphologyEx(m,
+        cv2.MORPH_OPEN,cv2.getStructuringElement(cv2.MORPH_ELLIPSE,ksize)) for m,ksize in  
+        zip([red_mask,green_mask,blue_mask,yellow_mask],[(8,8),(10,10),(20,20),(30,30)])]
+
+
+
+
+    total_mask = cv2.bitwise_or(green_mask,red_mask)
+    total_mask = cv2.bitwise_or(total_mask,blue_mask)
+    total_mask = cv2.bitwise_or(total_mask,yellow_mask)
+
+    coms = np.zeros((4,2))
+    comsImage = np.zeros((4,2))
+
+    idx = 0
+    for m in [green_mask,red_mask,blue_mask,yellow_mask]:
+        contours,hierarchy = cv2.findContours(m, 1, 2)
+        cnt = contours[0]
+        M = cv2.moments(cnt)
+
+        cx =int(M['m10']/M['m00']) 
+        cy =int(M['m01']/M['m00'])
+        
+        total_mask = cv2.drawMarker(total_mask, (cx,cy),(80,255,255),markerSize=60,thickness=2)
+
+        coms[idx,0] = int(cx- w/2)
+        coms[idx,1] = int(cy - h/2) * -1
+
+        comsImage[idx,0] = cx
+        comsImage[idx,1] = cy
+
+        idx = idx + 1
+
+    scaleFactor = np.linalg.norm(coms[1] - coms[3]) / 9
+
+    coms *= 1/scaleFactor
+
+    return (coms,comsImage,total_mask)
+
 def hue360to179(hue):
     return int((hue / 360) * 179)
 
