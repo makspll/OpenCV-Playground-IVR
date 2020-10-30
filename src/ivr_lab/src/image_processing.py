@@ -71,7 +71,7 @@ class image_converter:
         # Convert BGR to HSV
         hsv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
         
-        coms,comsImage,total_mask = threshold_joints(hsv_image)
+        coms,comsImage,total_mask,scaleFactor = threshold_joints(hsv_image)
         link_mask = threshold_links(hsv_image)
         total_mask = cv2.bitwise_or(link_mask,total_mask)
         
@@ -81,16 +81,6 @@ class image_converter:
         yellow_to_blue= coms[2] - coms[3]
         blue_to_green = coms[0] - coms[2]
         green_to_red = coms[1] - coms[0]
-
-        # self.joints.data = np.arctan2([
-        #                                 yellow_to_blue[0],
-        #                                 blue_to_green[0],
-        #                                 green_to_red[0]],
-        #                             [
-        #                                 yellow_to_blue[1],
-        #                                 blue_to_green[1],
-        #                                 green_to_red[1]
-        #                                 ])
 
         yellow_to_blue_image = comsImage[2] - comsImage[3]
         blue_to_green_image = comsImage[0] - comsImage[2]
@@ -155,19 +145,29 @@ class image_converter:
                             chamfer_rotations[1] - chamfer_rotations[0],
                             chamfer_rotations[2] - chamfer_rotations[1]]
 
-        print(self.joints.data)
-        # The image is loaded as cv_imag
 
-        cv2.imshow('window', link_1_crop)
-        cv2.imshow('window2', link_2_crop)
-        cv2.imshow('window3', link_3_crop)
+        forward_displacement = np.array([3,0,0])
+        R_1_0 = get_homog_trans_around_z(90,np.array([-0.75,-4.8,0]))
+        R_2_1 = get_homog_trans_around_z(self.joints.data[0],forward_displacement * 1)
+        R_3_2 = get_homog_trans_around_z(self.joints.data[1],forward_displacement * 1)
+        R_4_3 = get_homog_trans_around_z(self.joints.data[2],forward_displacement * 1)
+
+        R_4_0 = R_1_0@R_2_1@ R_3_2 @ R_4_3 
+        zero_point =  homogenize_3d_vector(np.array([[0],[0],[0]]))
+        end_pos = (R_4_0 @ zero_point)[0:3]
+        # The image is loaded as cv_imag
+        cv2.drawMarker(total_mask, (int((end_pos[0]*scaleFactor) + (w/2)),int((end_pos[1]*-scaleFactor) + h/2)),50,markerType=cv2.MARKER_DIAMOND,markerSize=10,thickness=2)
+        print(coms[1])
+        # cv2.imshow('window', link_1_crop)
+        # cv2.imshow('window2', link_2_crop)
+        # cv2.imshow('window3', link_3_crop)
+        cv2.imshow('window4', total_mask)
 
         cv2.waitKey(3)
 
         # publish the estimated position of robot end-effector (for lab 3)
-        # x_e_image = np.array([0, 0, 0])
-        # self.end_effector=Float64MultiArray()
-        # self.end_effector.data= x_e_image
+        self.end_effector=Float64MultiArray()
+        self.end_effector.data= end_pos
 
         # send control commands to joints (for lab 3)
         # self.joint1=Float64()
@@ -188,12 +188,24 @@ class image_converter:
             self.joints_pub.publish(self.joints)
             # (for lab 3)
             # self.trajectory_pub.publish(self.trajectory_desired)
-            # self.end_effector_pub.publish(self.end_effector)
+            self.end_effector_pub.publish(self.end_effector)
             # self.robot_joint1_pub.publish(self.joint1)
             # self.robot_joint2_pub.publish(self.joint2)
             # self.robot_joint3_pub.publish(self.joint3)
         except CvBridgeError as e:
             print(e)
+
+def get_homog_trans_around_z(deg,displacement):
+    deg = math.radians(deg)
+
+    return np.array([[math.cos(deg),-math.sin(deg),0,displacement[0]],
+                     [math.sin(deg),math.cos(deg),0,displacement[1]],
+                     [0,0,1,displacement[2]],
+                     [0,0,0,1]])
+
+def homogenize_3d_vector(vec):
+    vec = np.append(vec,[1])
+    return vec
 
 def chamfer_match_link(link,chamfer,rotation):
     h,w = link.shape
@@ -288,7 +300,7 @@ def threshold_joints(hsv_image):
 
     coms *= 1/scaleFactor
 
-    return (coms,comsImage,total_mask)
+    return (coms,comsImage,total_mask,scaleFactor)
 
 def hue360to179(hue):
     return int((hue / 360) * 179)
